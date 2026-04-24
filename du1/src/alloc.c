@@ -1,74 +1,169 @@
 #include "wrapper.h"
 
-/* Kod funkcii my_init, my_alloc a my_free nahradte vlastnym. Nepouzivajte ziadne
- * globalne ani staticke premenne; jedina globalna pamat je dostupna pomocou
- * mread/mwrite/msize, ktorych popis najdete vo wrapper.h */
+#define HEADER_SIZE 5
+#define FLAG_FREE 1
+#define FLAG_USED 0
 
-/* Ukazkovy kod zvladne naraz iba jedinu alokaciu. V 0-tom bajte pamate si
- * pamata, ci je pamat od 1 dalej volna alebo obsadena. 
- *
- * V pripade, ze je volna, volanie my_allloc skonci uspesne a vrati zaciatok
- * alokovanej RAM; my_free pri volnej mamati zlyha.
- *
- * Ak uz nejaka alokacia prebehla a v 0-tom bajte je nenulova hodnota. Nie je
- * mozne spravit dalsiu alokaciu, takze my_alloc musi zlyhat. my_free naopak
- * zbehnut moze a uvolni pamat.
- */
+static int read_int(int addr) {
+    int b0 = mread(addr);
+    int b1 = mread(addr + 1);
+    int b2 = mread(addr + 2);
+    int b3 = mread(addr + 3);
 
+    return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+}
 
-/**
- * Inicializacia pamate
- *
- * Zavola sa, v stave, ked sa zacina s prazdnou pamatou, ktora je inicializovana
- * na 0.
- */
+static void write_int(int addr, int value) {
+    mwrite(addr, value & 0xFF);
+    mwrite(addr + 1, (value >> 8) & 0xFF);
+    mwrite(addr + 2, (value >> 16) & 0xFF);
+    mwrite(addr + 3, (value >> 24) & 0xFF);
+}
+
+static int block_size(int block_addr) {
+    return read_int(block_addr);
+}
+
+static void set_block_size(int block_addr, int size) {
+    write_int(block_addr, size);
+}
+
+static int block_is_free(int block_addr) {
+    return mread(block_addr + 4);
+}
+
+static void set_block_free(int block_addr, int is_free) {
+    mwrite(block_addr + 4, is_free);
+}
+
+static int block_data_addr(int block_addr) {
+    return block_addr + HEADER_SIZE;
+}
+
+static int next_block_addr(int block_addr) {
+    return block_addr + HEADER_SIZE + block_size(block_addr);
+}
+
+static int block_is_valid(int block_addr) {
+    if (block_addr < 0) {
+        return 0;
+    }
+    if (block_addr + HEADER_SIZE > (int)msize()) {
+        return 0;
+    }
+
+    int size = block_size(block_addr);
+    if (size < 0) {
+        return 0;
+    }
+    if (block_addr + HEADER_SIZE + size > (int)msize()) {
+        return 0;
+    }
+
+    int flag = block_is_free(block_addr);
+    if (flag != FLAG_FREE && flag != FLAG_USED) {
+        return 0;
+    }
+
+    return 1;
+}
+
 void my_init(void) {
-	return;
+    if ((int)msize() < HEADER_SIZE) {
+        return;
+    }
+
+    set_block_size(0, (int)msize() - HEADER_SIZE);
+    set_block_free(0, FLAG_FREE);
 }
 
-/**
- * Poziadavka na alokaciu 'size' pamate. 
- *
- * Ak sa pamat podari alokovat, navratova hodnota je adresou prveho bajtu
- * alokovaneho priestoru v RAM. Pokial pamat uz nie je mozne alokovat, funkcia
- * vracia FAIL.
- */
 int my_alloc(unsigned int size) {
+    if (size == 0) {
+        return FAIL;
+    }
+    if (size > msize()) {
+        return FAIL;
+    }
 
-	/* Nemozeme alokovat viac pamate, ako je dostupne */
-	if (size >= msize() - 1)
-		return FAIL;
+    int block = 0;
 
-	/* Pamat uz bola alokovana */
-	if (mread(0) == 1)
-		return FAIL;
+    while (block + HEADER_SIZE <= (int)msize()) {
+        if (!block_is_valid(block)) {
+            return FAIL;
+        }
 
-	/* Vsetko je OK, mozeme splnit poziadavku. Do 0teho bajtu si poznacime, ze
-	 * pamat je obsadena a vratime adresu prveho bajtu novo alokovanej pamate
-	 */
-	mwrite(0, 1);
-	return 1;
+        int curr_size = block_size(block);
+
+        if (block_is_free(block) && curr_size >= (int)size) {
+            if (curr_size >= (int)size + HEADER_SIZE + 1) {
+                int old_size = curr_size;
+                int new_block = block + HEADER_SIZE + (int)size;
+                int new_size = old_size - (int)size - HEADER_SIZE;
+
+                set_block_size(block, (int)size);
+                set_block_free(block, FLAG_USED);
+
+                set_block_size(new_block, new_size);
+                set_block_free(new_block, FLAG_FREE);
+            } else {
+                set_block_free(block, FLAG_USED);
+            }
+
+            return block_data_addr(block);
+        }
+
+        int next = next_block_addr(block);
+        if (next <= block) {
+            return FAIL;
+        }
+        block = next;
+    }
+
+    return FAIL;
 }
-
-/**
- * Poziadavka na uvolnenie alokovanej pamate na adrese 'addr'.
- *
- * Ak bola pamat zacinajuca na adrese 'addr' alokovana, my_free ju uvolni a
- * vrati OK. Ak je adresa 'addr' chybna (nezacina na nej ziadna alokovana
- * pamat), my_free vracia FAIL.
- */
 
 int my_free(unsigned int addr) {
+    if (addr < HEADER_SIZE || addr >= msize()) {
+        return FAIL;
+    }
 
-	/* Adresa nie je platnym smernikom, ktory mohol vratit my_alloc */
-	if (addr != 1)
-		return FAIL;
+    int prev = -1;
+    int block = 0;
 
-	/* Nie je alokovana ziadna pamat, nemozeme ju teda uvolnit */
-	if (mread(0) != 1)
-		return FAIL;
+    while (block + HEADER_SIZE <= (int)msize()) {
+        if (!block_is_valid(block)) {
+            return FAIL;
+        }
 
-	/* Vsetko je OK, mozeme uvolnit pamat */
-	mwrite(0, 0);
-	return OK;
+        if ((unsigned int)block_data_addr(block) == addr) {
+            if (block_is_free(block)) {
+                return FAIL;
+            }
+
+            set_block_free(block, FLAG_FREE);
+
+            int right = next_block_addr(block);
+            if (right + HEADER_SIZE <= (int)msize() && block_is_valid(right) && block_is_free(right)) {
+                int new_size = block_size(block) + HEADER_SIZE + block_size(right);
+                set_block_size(block, new_size);
+            }
+
+            if (prev != -1 && block_is_valid(prev) && block_is_free(prev)) {
+                int new_size = block_size(prev) + HEADER_SIZE + block_size(block);
+                set_block_size(prev, new_size);
+            }
+
+            return OK;
+        }
+
+        prev = block;
+
+        int next = next_block_addr(block);
+        if (next <= block) {
+            return FAIL;
+        }
+        block = next;
+    }
+
+    return FAIL;
 }
