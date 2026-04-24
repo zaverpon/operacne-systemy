@@ -10,7 +10,7 @@
 #define FAIL (-1)
 #define OK 0
 
-static int read_int(int addr) {
+int read_int(int addr) {
     int b0 = mread(addr);
     int b1 = mread(addr + 1);
     int b2 = mread(addr + 2);
@@ -19,48 +19,48 @@ static int read_int(int addr) {
     return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
 }
 
-static void write_int(int addr, int value) {
+void write_int(int addr, int value) {
     mwrite(addr, value & 0xFF);
     mwrite(addr + 1, (value >> 8) & 0xFF);
     mwrite(addr + 2, (value >> 16) & 0xFF);
     mwrite(addr + 3, (value >> 24) & 0xFF);
 }
 
-static int block_raw(int block_addr) {
+int block_raw(int block_addr) {
     return read_int(block_addr);
 }
 
-static void set_block_raw(int block_addr, int raw) {
+void set_block_raw(int block_addr, int raw) {
     write_int(block_addr, raw);
 }
 
-static int block_size(int block_addr) {
+int block_size(int block_addr) {
     return block_raw(block_addr) >> 1;
 }
 
-static int block_is_free(int block_addr) {
+int block_is_free(int block_addr) {
     return block_raw(block_addr) & 1;
 }
 
-static void set_block_size(int block_addr, int size) {
+void set_block_size(int block_addr, int size) {
     int flag = block_is_free(block_addr);
     set_block_raw(block_addr, (size << 1) | flag);
 }
 
-static void set_block_free(int block_addr, int is_free) {
+void set_block_free(int block_addr, int is_free) {
     int size = block_size(block_addr);
     set_block_raw(block_addr, (size << 1) | is_free);
 }
 
-static int block_data_addr(int block_addr) {
+int block_data_addr(int block_addr) {
     return block_addr + HEADER_SIZE;
 }
 
-static int next_block_addr(int block_addr) {
+int next_block_addr(int block_addr) {
     return block_addr + HEADER_SIZE + block_size(block_addr);
 }
 
-static int block_is_valid(int block_addr) {
+int block_is_valid(int block_addr) {
     if (block_addr < ALLOC_HEADER_SIZE) {
         return 0;
     }
@@ -84,23 +84,23 @@ static int block_is_valid(int block_addr) {
     return 1;
 }
 
-static int get_free_head(void) {
+int get_free_head(void) {
     return read_int(0);
 }
 
-static void set_free_head(int addr) {
+void set_free_head(int addr) {
     write_int(0, addr);
 }
 
-static int get_next_free(int block_addr) {
+int get_next_free(int block_addr) {
     return read_int(block_addr + HEADER_SIZE);
 }
 
-static void set_next_free(int block_addr, int next) {
+void set_next_free(int block_addr, int next) {
     write_int(block_addr + HEADER_SIZE, next);
 }
 
-static void remove_from_free_list(int block_addr) {
+void remove_from_free_list(int block_addr) {
     int prev = FAIL;
     int curr = get_free_head();
 
@@ -121,7 +121,7 @@ static void remove_from_free_list(int block_addr) {
     }
 }
 
-static void insert_into_free_list_front(int block_addr) {
+void insert_into_free_list_front(int block_addr) {
     set_next_free(block_addr, get_free_head());
     set_free_head(block_addr);
 }
